@@ -1,0 +1,5 @@
+For dark elf: 
+
+upshot: 
+-data is precomputed, there is code in the darkelf_electron notebook to compute limits for any given mediator.
+-For us we will need to update the parameters of the material. There is a method for that already, and it allows us to update the v0 and vesc used in the rate computations.
