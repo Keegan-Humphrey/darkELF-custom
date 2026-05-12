@@ -42,7 +42,12 @@ EV_CM = 1.9732e-5       # eV * cm
 YEAR_S = 365.0 * 24.0 * 3600.0
 EV_TO_INV_S = 1.5192674e15
 EV_TO_INV_YR = EV_TO_INV_S * YEAR_S
+# Approximate nucleon mass for standard SI WIMP normalization.
+# Used to define the per-nucleon cross section sigma_n^SI.
+M_NUCLEON_EV = 0.939e9
 
+C_CM_S = 2.99792458e10
+C_CM_YR = C_CM_S * YEAR_S
 
 @dataclass(frozen=True)
 class Isotope:
@@ -171,36 +176,7 @@ def dsigma_dER_mc(
 
     return out if (np.ndim(ER) or np.ndim(vv)) else float(out)
 
-# C_CM_S = 2.99792458e10
 
-# def dsigma_dER_mc(
-#     ER_eV: np.ndarray | float,
-#     isotope: Isotope,
-#     kappa: float,
-#     q_dm: float = 1.0,
-# ) -> np.ndarray | float:
-#     r"""
-#     Returns v^2 * dσ/dER in cm^2/eV:
-
-#         v^2 dσ/dER =
-#             8π α^2 (kappa q_dm)^2 m_T / q^4
-#             × Z^2 F_Helm(q)^2
-#     """
-#     ER = np.asarray(ER_eV, dtype=float)
-#     mT = isotope.mass_eV
-
-#     q2 = 2.0 * mT * ER
-#     q = np.sqrt(np.maximum(q2, 1e-300))
-
-#     pref = 8.0 * PI * ALPHA_EM**2 * (kappa * q_dm)**2 * mT
-#     resp = nuclear_response_pp_approx(q, isotope)
-
-#     out = pref * resp / np.maximum(q, 1e-300)**4
-
-#     # eV^-3 -> cm^2/eV
-#     out = out * EV_CM**2
-
-#     return out if np.ndim(ER) else float(out)
 
 
 def vmin_nr(ER_eV: np.ndarray | float, mT_eV: float, mX_eV: float) -> np.ndarray | float:
@@ -213,6 +189,28 @@ def vmin_nr(ER_eV: np.ndarray | float, mT_eV: float, mX_eV: float) -> np.ndarray
     muXT = mX_eV * mT_eV / (mX_eV + mT_eV)
     out = np.sqrt(np.maximum(mT_eV * ER / (2.0 * muXT * muXT), 0.0))
     return out if np.ndim(ER) else float(out)
+
+
+def mu_reduced(m1_eV: np.ndarray | float, m2_eV: np.ndarray | float) -> np.ndarray | float:
+    """
+    Reduced mass in eV:
+        mu = m1 m2 / (m1 + m2)
+    """
+    m1 = np.asarray(m1_eV, dtype=float)
+    m2 = np.asarray(m2_eV, dtype=float)
+    out = (m1 * m2) / (m1 + m2)
+    return out if (np.ndim(m1) or np.ndim(m2)) else float(out)
+
+
+def coherence_factor_SI(isotope: Isotope, fp_over_fn: float = 1.0) -> float:
+    r"""
+    Standard spin-independent coherent factor:
+
+        [Z f_p/f_n + (A - Z)]^2
+
+    For isospin-conserving SI scattering, fp_over_fn = 1, this becomes A^2.
+    """
+    return (isotope.Z * fp_over_fn + (isotope.A - isotope.Z)) ** 2
 
 
 def dRdER_mc_isotope(
@@ -249,41 +247,6 @@ def dRdER_mc_isotope(
 
     out = (delfobj.rhoX / delfobj.mX) * NTkg * delfobj.eVtoInvYr * eta * ds
     return out if np.ndim(ER) else float(out)
-
-# def dRdER_mc_isotope(
-#     delfobj,
-#     ER_eV: np.ndarray | float,
-#     isotope: Isotope,
-#     kappa: float,
-#     q_dm: float = 1.0,
-#     vdist: str = "halo",
-# ) -> np.ndarray | float:
-#     """
-#     Differential rate for one isotope in events / kg / year / eV.
-
-#     Assumes delfobj.etav(vmin) is the inverse-speed integral appropriate
-#     for dσ/dER ∝ 1/v^2.
-#     """
-#     ER = np.asarray(ER_eV, dtype=float)
-#     mT = isotope.mass_eV
-#     vmin = vmin_nr(ER, mT, delfobj.mX)
-
-#     if vdist == "halo":
-#         eta = delfobj.etav(vmin)
-#     elif vdist == "disk":
-#         eta = delfobj.etav_disk(vmin)
-#     else:
-#         raise ValueError("vdist must be 'halo' or 'disk'")
-
-#     NTkg = 1.0 / (mT * delfobj.eVtokg)
-
-#     # A(ER), not dσ/dER evaluated at v=vmin.
-#     ds_vindep = dsigma_dER_mc(
-#         ER, isotope, kappa=kappa, q_dm=q_dm
-#     )
-
-#     out = (delfobj.rhoX / delfobj.mX) * NTkg * delfobj.eVtoInvYr * eta * ds_vindep
-#     return out if np.ndim(ER) else float(out)
 
 
 def dRdER_mc_material(
@@ -335,6 +298,316 @@ def R_mc_material(
     return float(np.trapz(spec, x=grid))
 
 
+# ============================================================
+# Standard contact SI WIMP nuclear recoil methods
+# ============================================================
+
+def dsigma_dER_wimp_SI(
+    ER_eV: np.ndarray | float,
+    v: np.ndarray | float,
+    isotope: Isotope,
+    sigma_n_cm2: float,
+    mX_eV: float,
+    fp_over_fn: float = 1.0,
+) -> np.ndarray | float:
+    r"""
+    Standard contact spin-independent WIMP differential cross section:
+
+        dσ_T/dER =
+            m_T σ_n / (2 μ_{χn}^2 v^2)
+            × [Z fp/fn + (A-Z)]^2
+            × F_Helm(q)^2
+
+    where σ_n is the per-nucleon SI reference cross section in cm^2.
+
+    Units:
+      - ER_eV, mX_eV, isotope.mass_eV are in eV
+      - v is dimensionless, in units of c
+      - output is cm^2 / eV
+
+    This function is useful for inspection, but for rates you should usually
+    use v2_dsigma_dER_wimp_SI(...) and multiply by eta(vmin).
+    """
+    ER = np.asarray(ER_eV, dtype=float)
+    vv = np.asarray(v, dtype=float)
+
+    mT = isotope.mass_eV
+    mu_chin = mu_reduced(mX_eV, M_NUCLEON_EV)
+
+    q2 = 2.0 * mT * ER
+    q = np.sqrt(np.maximum(q2, 1e-300))
+
+    coh = coherence_factor_SI(isotope, fp_over_fn=fp_over_fn)
+    F2 = helm_form_factor_squared(q, isotope.A)
+
+    pref = mT * sigma_n_cm2 / (2.0 * mu_chin**2)
+
+    out = pref * coh * F2 / np.maximum(vv, 1e-300) ** 2
+    return out if (np.ndim(ER) or np.ndim(vv)) else float(out)
+
+
+def v2_dsigma_dER_wimp_SI(
+    ER_eV: np.ndarray | float,
+    isotope: Isotope,
+    sigma_n_cm2: float,
+    mX_eV: float,
+    fp_over_fn: float = 1.0,
+) -> np.ndarray | float:
+    r"""
+    Velocity-independent piece of the contact SI cross section:
+
+        v^2 dσ_T/dER =
+            m_T σ_n / (2 μ_{χn}^2)
+            × [Z fp/fn + (A-Z)]^2
+            × F_Helm(q)^2
+
+    This is the object that should multiply the inverse-speed integral eta(vmin).
+    """
+    ER = np.asarray(ER_eV, dtype=float)
+
+    mT = isotope.mass_eV
+    mu_chin = mu_reduced(mX_eV, M_NUCLEON_EV)
+
+    q2 = 2.0 * mT * ER
+    q = np.sqrt(np.maximum(q2, 1e-300))
+
+    coh = coherence_factor_SI(isotope, fp_over_fn=fp_over_fn)
+    F2 = helm_form_factor_squared(q, isotope.A)
+
+    pref = mT * sigma_n_cm2 / (2.0 * mu_chin**2)
+
+    out = pref * coh * F2
+    return out if np.ndim(ER) else float(out)
+
+
+def dRdER_wimp_SI_isotope(
+    delfobj,
+    ER_eV: np.ndarray | float,
+    isotope: Isotope,
+    sigma_n_cm2: float,
+    fp_over_fn: float = 1.0,
+    vdist: str = "halo",
+) -> np.ndarray | float:
+    r"""
+    Differential contact-SI WIMP nuclear recoil rate for one isotope.
+
+    Output:
+        events / kg / year / eV
+
+    Rate structure:
+
+        dR/dER =
+            (rho_X / m_X) N_T eta(vmin)
+            × [v^2 dσ/dER]
+            × eVtoInvYr
+
+    This is appropriate because the contact SI differential cross section
+    scales as 1/v^2.
+    """
+    ER = np.asarray(ER_eV, dtype=float)
+
+    mT = isotope.mass_eV
+    vmin = vmin_nr(ER, mT, delfobj.mX)
+
+    if vdist == "halo":
+        eta = delfobj.etav(vmin)
+    elif vdist == "disk":
+        eta = delfobj.etav_disk(vmin)
+    else:
+        raise ValueError("vdist must be 'halo' or 'disk'")
+
+    NTkg = 1.0 / (mT * delfobj.eVtokg)
+
+    v2ds = v2_dsigma_dER_wimp_SI(
+        ER,
+        isotope,
+        sigma_n_cm2=sigma_n_cm2,
+        mX_eV=delfobj.mX,
+        fp_over_fn=fp_over_fn,
+    )
+
+    out = (delfobj.rhoX / delfobj.mX) * NTkg * delfobj.eVtoInvYr * eta * v2ds
+    return out if np.ndim(ER) else float(out)
+
+
+# def dRdER_wimp_SI_isotope(
+#     delfobj,
+#     ER_eV: np.ndarray | float,
+#     isotope: Isotope,
+#     sigma_n_cm2: float,
+#     fp_over_fn: float = 1.0,
+#     vdist: str = "halo",
+# ) -> np.ndarray | float:
+#     r"""
+#     Differential contact-SI WIMP nuclear recoil rate for one isotope.
+
+#     Output:
+#         events / kg / year / eV
+
+#     Uses cgs rate normalization:
+
+#         dR/dER =
+#             (rho_X / m_X) [1/cm^3]
+#             * N_T [1/kg]
+#             * c [cm/s]
+#             * year [s/yr]
+#             * eta(vmin)
+#             * [v^2 dσ/dER] [cm^2/eV]
+
+#     where v is dimensionless, v/c.
+#     """
+#     ER = np.asarray(ER_eV, dtype=float)
+
+#     mT = isotope.mass_eV
+#     vmin = vmin_nr(ER, mT, delfobj.mX)
+
+#     if vdist == "halo":
+#         eta = delfobj.etav(vmin)
+#     elif vdist == "disk":
+#         eta = delfobj.etav_disk(vmin)
+#     else:
+#         raise ValueError("vdist must be 'halo' or 'disk'")
+
+#     NTkg = 1.0 / (mT * delfobj.eVtokg)
+
+#     v2ds = v2_dsigma_dER_wimp_SI(
+#         ER,
+#         isotope,
+#         sigma_n_cm2=sigma_n_cm2,
+#         mX_eV=delfobj.mX,
+#         fp_over_fn=fp_over_fn,
+#     )
+
+#     out = (delfobj.rhoX / delfobj.mX) * NTkg * C_CM_YR * eta * v2ds
+#     return out if np.ndim(ER) else float(out)
+
+def dRdER_wimp_SI_material(
+    delfobj,
+    ER_eV: np.ndarray | float,
+    material: str,
+    sigma_n_cm2: float,
+    fp_over_fn: float = 1.0,
+    vdist: str = "halo",
+) -> np.ndarray | float:
+    """
+    Isotopically averaged contact-SI WIMP differential recoil spectrum.
+
+    Output:
+        events / kg / year / eV
+    """
+    mat = NR_MATERIALS[material]
+    ER = np.asarray(ER_eV, dtype=float)
+
+    total = np.zeros_like(ER, dtype=float)
+
+    for iso in mat.isotopes:
+        total += iso.abundance * dRdER_wimp_SI_isotope(
+            delfobj,
+            ER,
+            iso,
+            sigma_n_cm2=sigma_n_cm2,
+            fp_over_fn=fp_over_fn,
+            vdist=vdist,
+        )
+
+    return total if np.ndim(ER) else float(total)
+
+
+def R_wimp_SI_material(
+    delfobj,
+    material: str,
+    sigma_n_cm2: float,
+    fp_over_fn: float = 1.0,
+    vdist: str = "halo",
+    ER_min_eV: Optional[float] = None,
+    ER_max_eV: Optional[float] = None,
+    npts: int = 800,
+) -> float:
+    """
+    Total contact-SI WIMP nuclear recoil rate integrated over the recoil window.
+
+    Output:
+        events / kg / year
+    """
+    mat = NR_MATERIALS[material]
+    lo, hi = mat.recoil_window_eV
+
+    if ER_min_eV is not None:
+        lo = max(lo, ER_min_eV)
+    if ER_max_eV is not None:
+        hi = min(hi, ER_max_eV)
+
+    if not (hi > lo > 0.0):
+        return 0.0
+
+    grid = np.geomspace(lo, hi, npts)
+
+    spec = dRdER_wimp_SI_material(
+        delfobj,
+        grid,
+        material=material,
+        sigma_n_cm2=sigma_n_cm2,
+        fp_over_fn=fp_over_fn,
+        vdist=vdist,
+    )
+
+    return float(np.trapz(spec, x=grid))
+
+
+def sigma_n_limit_wimp_SI_material(
+    delfobj,
+    material: str,
+    exposure_kgyr: float,
+    n_limit: float = 2.3,
+    fp_over_fn: float = 1.0,
+    vdist: str = "halo",
+    ER_min_eV: Optional[float] = None,
+    ER_max_eV: Optional[float] = None,
+    npts: int = 800,
+    sigma_ref_cm2: float = 1e-45,
+) -> float:
+    r"""
+    Simple rate-only projected/exclusion limit on σ_n^SI.
+
+    Computes the total rate for a reference cross section and rescales:
+
+        σ_lim = σ_ref × n_limit / (R_ref × exposure)
+
+    Parameters
+    ----------
+    exposure_kgyr:
+        Exposure in kg-year.
+
+    n_limit:
+        Event upper limit. For a zero-background, zero-event Poisson
+        90% CL estimate, n_limit = 2.3.
+
+    sigma_ref_cm2:
+        Reference per-nucleon SI cross section used for rate evaluation.
+
+    Returns
+    -------
+    sigma_lim_cm2:
+        Approximate per-nucleon SI cross-section limit in cm^2.
+    """
+    R_ref = R_wimp_SI_material(
+        delfobj,
+        material=material,
+        sigma_n_cm2=sigma_ref_cm2,
+        fp_over_fn=fp_over_fn,
+        vdist=vdist,
+        ER_min_eV=ER_min_eV,
+        ER_max_eV=ER_max_eV,
+        npts=npts,
+    )
+
+    if not np.isfinite(R_ref) or R_ref <= 0.0:
+        return np.inf
+
+    return sigma_ref_cm2 * n_limit / (R_ref * exposure_kgyr)
+
+
+
 def attach_mc_nr_methods(darkelf_cls) -> None:
     """
     Monkey-patch convenience methods onto a DarkELF-like class.
@@ -357,6 +630,88 @@ def attach_mc_nr_methods(darkelf_cls) -> None:
     setattr(darkelf_cls, "dRdER_mc", _dRdER_mc)
     setattr(darkelf_cls, "R_mc", _R_mc)
 
+
+def attach_wimp_SI_nr_methods(darkelf_cls) -> None:
+    """
+    Monkey-patch WIMP-SI nuclear recoil methods onto a DarkELF-like class.
+
+    After calling:
+
+        attach_wimp_SI_nr_methods(darkelf)
+
+    you can do:
+
+        delf.dRdER_wimp_SI(...)
+        delf.R_wimp_SI(...)
+        delf.sigma_n_limit_wimp_SI(...)
+    """
+
+    def _dRdER_wimp_SI(
+        self,
+        ER_eV,
+        material="Xe",
+        sigma_n_cm2=1e-45,
+        fp_over_fn=1.0,
+        vdist="halo",
+    ):
+        return dRdER_wimp_SI_material(
+            self,
+            ER_eV,
+            material=material,
+            sigma_n_cm2=sigma_n_cm2,
+            fp_over_fn=fp_over_fn,
+            vdist=vdist,
+        )
+
+    def _R_wimp_SI(
+        self,
+        material="Xe",
+        sigma_n_cm2=1e-45,
+        fp_over_fn=1.0,
+        vdist="halo",
+        ER_min_eV=None,
+        ER_max_eV=None,
+        npts=800,
+    ):
+        return R_wimp_SI_material(
+            self,
+            material=material,
+            sigma_n_cm2=sigma_n_cm2,
+            fp_over_fn=fp_over_fn,
+            vdist=vdist,
+            ER_min_eV=ER_min_eV,
+            ER_max_eV=ER_max_eV,
+            npts=npts,
+        )
+
+    def _sigma_n_limit_wimp_SI(
+        self,
+        material="Xe",
+        exposure_kgyr=1.0,
+        n_limit=2.3,
+        fp_over_fn=1.0,
+        vdist="halo",
+        ER_min_eV=None,
+        ER_max_eV=None,
+        npts=800,
+        sigma_ref_cm2=1e-45,
+    ):
+        return sigma_n_limit_wimp_SI_material(
+            self,
+            material=material,
+            exposure_kgyr=exposure_kgyr,
+            n_limit=n_limit,
+            fp_over_fn=fp_over_fn,
+            vdist=vdist,
+            ER_min_eV=ER_min_eV,
+            ER_max_eV=ER_max_eV,
+            npts=npts,
+            sigma_ref_cm2=sigma_ref_cm2,
+        )
+
+    setattr(darkelf_cls, "dRdER_wimp_SI", _dRdER_wimp_SI)
+    setattr(darkelf_cls, "R_wimp_SI", _R_wimp_SI)
+    setattr(darkelf_cls, "sigma_n_limit_wimp_SI", _sigma_n_limit_wimp_SI)
 
 if __name__ == "__main__":
     print("Available NR materials:", ", ".join(NR_MATERIALS.keys()))
