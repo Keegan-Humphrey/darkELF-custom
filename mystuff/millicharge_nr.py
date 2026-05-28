@@ -177,6 +177,31 @@ def dsigma_dER_mc(
     return out if (np.ndim(ER) or np.ndim(vv)) else float(out)
 
 
+def v2_dsigma_dER_mc(
+    ER_eV: np.ndarray | float,
+    isotope: Isotope,
+    kappa: float,
+    q_dm: float = 1.0,
+) -> np.ndarray | float:
+    r"""
+    Returns v^2 dσ/dER in cm^2/eV for massless photon / millicharge scattering.
+    """
+    ER = np.asarray(ER_eV, dtype=float)
+    mT = isotope.mass_eV
+
+    q2 = 2.0 * mT * ER
+    q = np.sqrt(np.maximum(q2, 1e-300))
+
+    pref = 8.0 * PI * ALPHA_EM**2 * (kappa * q_dm) ** 2 * mT
+    resp = nuclear_response_pp_approx(q, isotope)
+
+    out = pref * resp / np.maximum(q, 1e-300) ** 4
+
+    # natural eV^{-3} -> cm^2/eV
+    out = out * (EV_CM**2)
+
+    return out if np.ndim(ER) else float(out)
+
 
 
 def vmin_nr(ER_eV: np.ndarray | float, mT_eV: float, mX_eV: float) -> np.ndarray | float:
@@ -213,6 +238,41 @@ def coherence_factor_SI(isotope: Isotope, fp_over_fn: float = 1.0) -> float:
     return (isotope.Z * fp_over_fn + (isotope.A - isotope.Z)) ** 2
 
 
+# def dRdER_mc_isotope(
+#     delfobj,
+#     ER_eV: np.ndarray | float,
+#     isotope: Isotope,
+#     kappa: float,
+#     q_dm: float = 1.0,
+#     vdist: str = "halo",
+# ) -> np.ndarray | float:
+#     """
+#     Differential rate for one isotope in events / kg / year / eV, using the velocity
+#     integral methods already present on the supplied DarkELF-like object.
+
+#     Required attributes on delfobj:
+#       - mX, rhoX, eVtoInvYr
+#       - etav(vmin) and/or etav_disk(vmin)
+
+#     The number of nuclei per kg is computed from the isotope mass.
+#     """
+#     ER = np.asarray(ER_eV, dtype=float)
+#     mT = isotope.mass_eV
+#     vmin = vmin_nr(ER, mT, delfobj.mX)
+
+#     if vdist == "halo":
+#         eta = delfobj.etav(vmin)
+#     elif vdist == "disk":
+#         eta = delfobj.etav_disk(vmin)
+#     else:
+#         raise ValueError("vdist must be 'halo' or 'disk'")
+
+#     NTkg = 1.0 / (mT * delfobj.eVtokg)
+#     ds = dsigma_dER_mc(ER, np.maximum(vmin, 1e-300), isotope, kappa=kappa, q_dm=q_dm)
+
+#     out = (delfobj.rhoX / delfobj.mX) * NTkg * delfobj.eVtoInvYr * eta * ds
+#     return out if np.ndim(ER) else float(out)
+
 def dRdER_mc_isotope(
     delfobj,
     ER_eV: np.ndarray | float,
@@ -222,16 +282,13 @@ def dRdER_mc_isotope(
     vdist: str = "halo",
 ) -> np.ndarray | float:
     """
-    Differential rate for one isotope in events / kg / year / eV, using the velocity
-    integral methods already present on the supplied DarkELF-like object.
+    Differential millicharge nuclear recoil rate for one isotope.
 
-    Required attributes on delfobj:
-      - mX, rhoX, eVtoInvYr
-      - etav(vmin) and/or etav_disk(vmin)
-
-    The number of nuclei per kg is computed from the isotope mass.
+    Output:
+        events / kg / year / eV
     """
     ER = np.asarray(ER_eV, dtype=float)
+
     mT = isotope.mass_eV
     vmin = vmin_nr(ER, mT, delfobj.mX)
 
@@ -243,9 +300,15 @@ def dRdER_mc_isotope(
         raise ValueError("vdist must be 'halo' or 'disk'")
 
     NTkg = 1.0 / (mT * delfobj.eVtokg)
-    ds = dsigma_dER_mc(ER, np.maximum(vmin, 1e-300), isotope, kappa=kappa, q_dm=q_dm)
 
-    out = (delfobj.rhoX / delfobj.mX) * NTkg * delfobj.eVtoInvYr * eta * ds
+    v2ds = v2_dsigma_dER_mc(
+        ER,
+        isotope,
+        kappa=kappa,
+        q_dm=q_dm,
+    )
+
+    out = (delfobj.rhoX / delfobj.mX) * NTkg * C_CM_YR * eta * v2ds
     return out if np.ndim(ER) else float(out)
 
 
@@ -379,57 +442,6 @@ def v2_dsigma_dER_wimp_SI(
     out = pref * coh * F2
     return out if np.ndim(ER) else float(out)
 
-
-def dRdER_wimp_SI_isotope(
-    delfobj,
-    ER_eV: np.ndarray | float,
-    isotope: Isotope,
-    sigma_n_cm2: float,
-    fp_over_fn: float = 1.0,
-    vdist: str = "halo",
-) -> np.ndarray | float:
-    r"""
-    Differential contact-SI WIMP nuclear recoil rate for one isotope.
-
-    Output:
-        events / kg / year / eV
-
-    Rate structure:
-
-        dR/dER =
-            (rho_X / m_X) N_T eta(vmin)
-            × [v^2 dσ/dER]
-            × eVtoInvYr
-
-    This is appropriate because the contact SI differential cross section
-    scales as 1/v^2.
-    """
-    ER = np.asarray(ER_eV, dtype=float)
-
-    mT = isotope.mass_eV
-    vmin = vmin_nr(ER, mT, delfobj.mX)
-
-    if vdist == "halo":
-        eta = delfobj.etav(vmin)
-    elif vdist == "disk":
-        eta = delfobj.etav_disk(vmin)
-    else:
-        raise ValueError("vdist must be 'halo' or 'disk'")
-
-    NTkg = 1.0 / (mT * delfobj.eVtokg)
-
-    v2ds = v2_dsigma_dER_wimp_SI(
-        ER,
-        isotope,
-        sigma_n_cm2=sigma_n_cm2,
-        mX_eV=delfobj.mX,
-        fp_over_fn=fp_over_fn,
-    )
-
-    out = (delfobj.rhoX / delfobj.mX) * NTkg * delfobj.eVtoInvYr * eta * v2ds
-    return out if np.ndim(ER) else float(out)
-
-
 # def dRdER_wimp_SI_isotope(
 #     delfobj,
 #     ER_eV: np.ndarray | float,
@@ -444,17 +456,15 @@ def dRdER_wimp_SI_isotope(
 #     Output:
 #         events / kg / year / eV
 
-#     Uses cgs rate normalization:
+#     Rate structure:
 
 #         dR/dER =
-#             (rho_X / m_X) [1/cm^3]
-#             * N_T [1/kg]
-#             * c [cm/s]
-#             * year [s/yr]
-#             * eta(vmin)
-#             * [v^2 dσ/dER] [cm^2/eV]
+#             (rho_X / m_X) N_T eta(vmin)
+#             × [v^2 dσ/dER]
+#             × eVtoInvYr
 
-#     where v is dimensionless, v/c.
+#     This is appropriate because the contact SI differential cross section
+#     scales as 1/v^2.
 #     """
 #     ER = np.asarray(ER_eV, dtype=float)
 
@@ -478,8 +488,61 @@ def dRdER_wimp_SI_isotope(
 #         fp_over_fn=fp_over_fn,
 #     )
 
-#     out = (delfobj.rhoX / delfobj.mX) * NTkg * C_CM_YR * eta * v2ds
+#     out = (delfobj.rhoX / delfobj.mX) * NTkg * delfobj.eVtoInvYr * eta * v2ds
 #     return out if np.ndim(ER) else float(out)
+
+
+def dRdER_wimp_SI_isotope(
+    delfobj,
+    ER_eV: np.ndarray | float,
+    isotope: Isotope,
+    sigma_n_cm2: float,
+    fp_over_fn: float = 1.0,
+    vdist: str = "halo",
+) -> np.ndarray | float:
+    r"""
+    Differential contact-SI WIMP nuclear recoil rate for one isotope.
+
+    Output:
+        events / kg / year / eV
+
+    Uses cgs rate normalization:
+
+        dR/dER =
+            (rho_X / m_X) [1/cm^3]
+            * N_T [1/kg]
+            * c [cm/s]
+            * year [s/yr]
+            * eta(vmin)
+            * [v^2 dσ/dER] [cm^2/eV]
+
+    where v is dimensionless, v/c.
+    """
+    ER = np.asarray(ER_eV, dtype=float)
+
+    mT = isotope.mass_eV
+    vmin = vmin_nr(ER, mT, delfobj.mX)
+
+    if vdist == "halo":
+        eta = delfobj.etav(vmin)
+    elif vdist == "disk":
+        eta = delfobj.etav_disk(vmin)
+    else:
+        raise ValueError("vdist must be 'halo' or 'disk'")
+
+    NTkg = 1.0 / (mT * delfobj.eVtokg)
+
+    v2ds = v2_dsigma_dER_wimp_SI(
+        ER,
+        isotope,
+        sigma_n_cm2=sigma_n_cm2,
+        mX_eV=delfobj.mX,
+        fp_over_fn=fp_over_fn,
+    )
+
+    out = (delfobj.rhoX / delfobj.mX) * NTkg * C_CM_YR * eta * v2ds
+    return out if np.ndim(ER) else float(out)
+
 
 def dRdER_wimp_SI_material(
     delfobj,
