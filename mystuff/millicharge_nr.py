@@ -174,7 +174,7 @@ def dsigma_dER_mc(
     out = pref * resp / (np.maximum(vv, 1e-300) ** 2 * np.maximum(q, 1e-300) ** 4)
     out = out * (EV_CM ** 2)
 
-    return out if (np.ndim(ER) or np.ndim(vv)) else float(out)
+    return out if (np.ndim(ER) or np.ndim(vv)) else float(out) 
 
 
 def v2_dsigma_dER_mc(

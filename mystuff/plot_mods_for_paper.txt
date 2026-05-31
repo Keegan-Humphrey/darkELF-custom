@@ -1,0 +1,51 @@
+kept_indices = (1,2,3,4,5)
+therm_drops = (3,4)
+
+
+
+therm_val = 1e9
+therm_ind = next(j for j, x in enumerate(masslist) if x >= therm_val)
+
+for i in kept_indices:
+    axs.plot(
+        masslist[therm_ind:] if (i in therm_drops) else masslist,
+        lim_massless[i][therm_ind:] if (i in therm_drops) else lim_massless[i],
+        label=targetlabels[i],
+        color=colors[i]
+    )
+
+axs.set_xscale("log")   
+axs.set_yscale("log")
+
+axs.set_xlim([1e6, 1.1e15])
+# axs.set_ylim([1e-49, 1.1e-26])
+axs.set_ylim([1e-45, 1.1e-26])
+
+
+
+
+# ------------------------------------------------------------------
+# Labelled vertical line for legend
+# ------------------------------------------------------------------
+
+vline_x = therm_val
+
+therm_line = axs.axvline(
+    vline_x,
+    color="black",
+    lw=1.4,
+    ls=":",
+    alpha=0.9,
+    zorder=2,
+    # label=r"$m_{p_D}=1\,\mathrm{GeV}$"
+)
+
+
+# keep only the original target curves in the legend
+# main_handles = handles[:len(lim_massless)]
+# main_labels = labels[:len(lim_massless)]
+main_handles = handles[:len(kept_indices)]
+main_labels = labels[:len(kept_indices)]
+
+main_handles.append(therm_line)
+main_labels.append(r"$K_{A,S} =10$")
