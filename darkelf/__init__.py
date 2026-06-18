@@ -6,6 +6,7 @@ from scipy.special import erf, erfc
 import pandas as pd
 import sys, os
 import yaml
+from scipy.integrate import quad
 
 
 class darkelf(object):
@@ -534,13 +535,141 @@ class darkelf(object):
     ############################################################################################
     ########################### Disk - velocity distributions ##################################
 
-    # boosted velocity integrand for isotropic approx - dimensionless
-    # disk case, assumes comoving with Earth (so ve irrelevant), Maxwell-Boltzmann at infinity
+    # no earth boost accounted for
+
+
+    # # boosted velocity integrand for isotropic approx - dimensionless
+    # # disk case, assumes comoving with Earth (so ve irrelevant), Maxwell-Boltzmann at infinity
+    # def _fv_1d_scalar_disk(self, v):
+    #     if(v < self.vesc):
+    #         return 0
+    #     else:
+    #         return (4*pi*v**2/self.Nfv_disk) * exp(- (v**2 - self.vesc**2)/self.v0**2 )
+
+    # # velocity integrant to be called
+    # def fv_1d_disk(self,v):
+    #     """
+    #     DM speed distribution in the lab (i.e., integrating fDM(v) over angles)
+
+    #     Inputs
+    #     ------
+    #     v: float or array
+    #         v in units where c = 1
+    #     """
+    #     if(isinstance(v,(np.ndarray,list)) ):
+    #         return np.array([self._fv_1d_scalar_disk(vi) for vi in v])
+    #     elif(isinstance(v,float)):
+    #         return self._fv_1d_scalar_disk(v)
+    #     else:
+    #         print("Warning! fv_disk function given invalid quantity ")
+    #         return 0.0
+
+    # # eta(v) function, acts only on scalar values
+    # def _etav_scalar_disk(self,vmini):
+    #     if(vmini < self.vesc):
+    #         return 2*pi*self.v0**2/self.Nfv_disk
+    #     else:
+    #         return 2*pi*self.v0**2/self.Nfv_disk * exp(- (vmini**2 - self.vesc**2)/self.v0**2 )
+
+    # # eta(v) function designed to be called
+    # def etav_disk(self,vmini):
+    #     """
+    #     Integral of d^3v fDM(v)/v Theta(v - vmin)
+
+    #     Inputs
+    #     ------
+    #     vmini: float or array
+    #         vmin in units where c = 1
+    #     """
+    #     if(isinstance(vmini,(np.ndarray,list)) ):
+    #         return np.array([self._etav_scalar_disk(vminii) for vminii in vmini])
+    #     elif(isinstance(vmini,float)):
+    #         return self._etav_scalar_disk(vmini)
+    #     else:
+    #         print("Warning! etav_disk function given invalid quantity ")
+    #         return 0.0
+
+    #  # Minimum and maximum allowed q values (TOTAL momentum transfer), given omega (energy deposited) and other DM params
+    # def qmin_disk(self,omega):
+    #     if( omega + self.delta < self.omegaDMmax):
+    #         return self.mX*self.vmax - np.sqrt(self.mX**2*self.vmax**2 \
+    #             - 2 * (omega + self.delta) * self.mX)
+    #     else:
+    #         return 0
+
+    # def qmax_disk(self,omega):
+    #     if( omega + self.delta < self.omegaDMmax):
+    #         return self.mX*self.vmax + np.sqrt(self.mX**2*self.vmax**2  \
+    #             - 2 * (omega + self.delta) * self.mX)
+    #     else:
+    #         return 0
+
+
+
+    ############################################################################################
+    ########################### Disk - velocity distributions ##################################
+
+    # boosted velocity integrand for isotropic approximation - dimensionless
+    # disk case, with the cutoff imposed in the Sun frame
     def _fv_1d_scalar_disk(self, v):
-        if(v < self.vesc):
+
+        # Unboosted limit
+        if(self.veavg == 0):
+            if(v < self.vesc):
+                return 0
+            else:
+                return (4*pi*v**2/self.Nfv_disk) * exp(
+                    -(v**2 - self.vesc**2)/self.v0**2
+                )
+
+        # No Earth-frame direction corresponds to a Sun-frame speed
+        # above the cutoff.
+        if(v <= self.vesc - self.veavg):
             return 0
+
+        # Only part of the angular range satisfies
+        # |v + ve| >= vesc.
+        elif(v < self.vesc + self.veavg):
+
+            a = 2*v*self.veavg/self.v0**2
+
+            mumin = (
+                self.vesc**2
+                - v**2
+                - self.veavg**2
+            )/(2*v*self.veavg)
+
+            angular_integral = (
+                exp(-a*mumin) - exp(-a)
+            )/a
+
+            return (
+                (2*pi*v**2/self.Nfv_disk)
+                * exp(
+                    -(v**2 + self.veavg**2 - self.vesc**2)
+                    / self.v0**2
+                )
+                * angular_integral
+            )
+
+        # Every angular direction satisfies the Sun-frame cutoff.
         else:
-            return (4*pi*v**2/self.Nfv_disk) * exp(- (v**2 - self.vesc**2)/self.v0**2 )
+
+            a = 2*v*self.veavg/self.v0**2
+
+            # Stable evaluation of sinh(a)/a near a = 0
+            if(abs(a) < 1e-6):
+                sinhca = 1 + a**2/6 + a**4/120
+            else:
+                sinhca = sinh(a)/a
+
+            return (
+                (4*pi*v**2/self.Nfv_disk)
+                * exp(-(v**2 - self.vesc**2)/self.v0**2)
+                * exp(-self.veavg**2/self.v0**2)
+                * sinhca
+            )
+
 
     # velocity integrant to be called
     def fv_1d_disk(self,v):
@@ -560,12 +689,53 @@ class darkelf(object):
             print("Warning! fv_disk function given invalid quantity ")
             return 0.0
 
+
     # eta(v) function, acts only on scalar values
     def _etav_scalar_disk(self,vmini):
-        if(vmini < self.vesc):
-            return 2*pi*self.v0**2/self.Nfv_disk
+
+        # Recover the original analytic expression in the unboosted case.
+        if(self.veavg == 0):
+            if(vmini < self.vesc):
+                return 2*pi*self.v0**2/self.Nfv_disk
+            else:
+                return (
+                    2*pi*self.v0**2/self.Nfv_disk
+                    * exp(-(vmini**2 - self.vesc**2)/self.v0**2)
+                )
+
+        # The boosted distribution has support beginning at
+        # vesc - veavg.
+        vlower = max(vmini, self.vesc - self.veavg)
+
+        # The form of fv_1d_disk changes at vesc + veavg.
+        vboundary = self.vesc + self.veavg
+
+        # If vmin lies in the partial-angular-support region, integrate
+        # that piece separately before integrating the full-angle piece.
+        if(vlower < vboundary):
+
+            eta_partial = quad(
+                lambda v: self._fv_1d_scalar_disk(v)/v,
+                vlower,
+                vboundary
+            )[0]
+
+            eta_full = quad(
+                lambda v: self._fv_1d_scalar_disk(v)/v,
+                vboundary,
+                np.inf
+            )[0]
+
+            return eta_partial + eta_full
+
+        # Otherwise only the full-angular-support branch contributes.
         else:
-            return 2*pi*self.v0**2/self.Nfv_disk * exp(- (vmini**2 - self.vesc**2)/self.v0**2 )
+            return quad(
+                lambda v: self._fv_1d_scalar_disk(v)/v,
+                vlower,
+                np.inf
+            )[0]
+
 
     # eta(v) function designed to be called
     def etav_disk(self,vmini):
@@ -584,6 +754,7 @@ class darkelf(object):
         else:
             print("Warning! etav_disk function given invalid quantity ")
             return 0.0
+
 
     #  # Minimum and maximum allowed q values (TOTAL momentum transfer), given omega (energy deposited) and other DM params
     # def qmin_disk(self,omega):
