@@ -10,7 +10,7 @@ from scipy.integrate import quad
 
 
 class darkelf(object):
-    def __init__(self, mX = 1e5, mMed = -1, vesckms = 500, v0kms = 220, vekms = 240, fD = 1, vdist="halo", delta = 0.0, q0=0.0, gp_gn_ratio_val=1, gp_gn_ratio='g_n/g_p', nuclear_recoil=False,
+    def __init__(self, mX = 1e5, mMed = -1, vesckms = 500, v0kms = 220, vekms = 240, fD = 1, vdist="halo", with_atomic_ff=False, delta = 0.0, q0=0.0, gp_gn_ratio_val=1, gp_gn_ratio='g_n/g_p', nuclear_recoil=False,
         target='Ge',targetyaml='',filename="", phonon_filename="",
         eps_data_dir = os.path.dirname(__file__)+"/../data/",
         dos_filename="",fd_filename="",Zion_filename="",eps_electron_optical_filename=""):
@@ -43,6 +43,8 @@ class darkelf(object):
 
         self.vdist = vdist
         # self.vescdisk = vescdiskkms / self.c0
+        
+        self.with_atomic_ff = with_atomic_ff
 
         # read in various material-dependent quantities from yaml
         self.target = target

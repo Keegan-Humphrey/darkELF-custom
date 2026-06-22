@@ -34,8 +34,6 @@ from typing import Dict, List, Optional
 import math
 import numpy as np
 
-from atomic_dark_hydrogen_ff import dark_hydrogen_screening_squared
-
 PI = math.pi
 ALPHA_EM = 1.0 / 137.0
 AMU_EV = 0.9315e9       # atomic mass unit in eV
@@ -153,10 +151,6 @@ def dsigma_dER_mc(
     isotope: Isotope,
     kappa: float,
     q_dm: float = 1.0,
-    with_atomic_ff: bool = False,
-    alpha_D: Optional[float] = None,
-    m_eD_eV: Optional[float] = None,
-    m_pD_eV: Optional[float] = None,
 ) -> np.ndarray | float:
     r"""
     Pure millicharge ("MC") differential cross section from the notebook, in cm^2 / eV:
@@ -175,12 +169,6 @@ def dsigma_dER_mc(
 
     pref = 8.0 * PI * (ALPHA_EM**2) * (kappa * q_dm) ** 2 * mT
     resp = nuclear_response_pp_approx(q, isotope)
-    if with_atomic_ff:
-        if alpha_D is None or m_eD_eV is None or m_pD_eV is None:
-            raise ValueError("with_atomic_ff=True requires alpha_D, m_eD_eV, and m_pD_eV")
-        resp = resp * dark_hydrogen_screening_squared(
-            q, alpha_D=alpha_D, m_eD_eV=m_eD_eV, m_pD_eV=m_pD_eV
-        )
 
     # natural-units expression gives eV^{-3}; convert by (eV*cm)^2 -> cm^2 and leave /eV
     out = pref * resp / (np.maximum(vv, 1e-300) ** 2 * np.maximum(q, 1e-300) ** 4)
@@ -194,10 +182,6 @@ def v2_dsigma_dER_mc(
     isotope: Isotope,
     kappa: float,
     q_dm: float = 1.0,
-    with_atomic_ff: bool = False,
-    alpha_D: Optional[float] = None,
-    m_eD_eV: Optional[float] = None,
-    m_pD_eV: Optional[float] = None,
 ) -> np.ndarray | float:
     r"""
     Returns v^2 dσ/dER in cm^2/eV for massless photon / millicharge scattering.
@@ -210,12 +194,6 @@ def v2_dsigma_dER_mc(
 
     pref = 8.0 * PI * ALPHA_EM**2 * (kappa * q_dm) ** 2 * mT
     resp = nuclear_response_pp_approx(q, isotope)
-    if with_atomic_ff:
-        if alpha_D is None or m_eD_eV is None or m_pD_eV is None:
-            raise ValueError("with_atomic_ff=True requires alpha_D, m_eD_eV, and m_pD_eV")
-        resp = resp * dark_hydrogen_screening_squared(
-            q, alpha_D=alpha_D, m_eD_eV=m_eD_eV, m_pD_eV=m_pD_eV
-        )
 
     out = pref * resp / np.maximum(q, 1e-300) ** 4
 
@@ -302,10 +280,6 @@ def dRdER_mc_isotope(
     kappa: float,
     q_dm: float = 1.0,
     vdist: str = "halo",
-    with_atomic_ff: bool = False,
-    alpha_D: Optional[float] = None,
-    m_eD_eV: Optional[float] = None,
-    m_pD_eV: Optional[float] = None,
 ) -> np.ndarray | float:
     """
     Differential millicharge nuclear recoil rate for one isotope.
@@ -332,10 +306,6 @@ def dRdER_mc_isotope(
         isotope,
         kappa=kappa,
         q_dm=q_dm,
-        with_atomic_ff=with_atomic_ff,
-        alpha_D=alpha_D,
-        m_eD_eV=m_eD_eV,
-        m_pD_eV=m_pD_eV,
     )
 
     out = (delfobj.rhoX / delfobj.mX) * NTkg * C_CM_YR * eta * v2ds
@@ -349,10 +319,6 @@ def dRdER_mc_material(
     kappa: float,
     q_dm: float = 1.0,
     vdist: str = "halo",
-    with_atomic_ff: bool = False,
-    alpha_D: Optional[float] = None,
-    m_eD_eV: Optional[float] = None,
-    m_pD_eV: Optional[float] = None,
 ) -> np.ndarray | float:
     """
     Isotopically averaged differential recoil spectrum in events / kg / year / eV.
@@ -362,9 +328,7 @@ def dRdER_mc_material(
     total = np.zeros_like(ER, dtype=float)
     for iso in mat.isotopes:
         total += iso.abundance * dRdER_mc_isotope(
-            delfobj, ER, iso, kappa=kappa, q_dm=q_dm, vdist=vdist,
-            with_atomic_ff=with_atomic_ff, alpha_D=alpha_D,
-            m_eD_eV=m_eD_eV, m_pD_eV=m_pD_eV,
+            delfobj, ER, iso, kappa=kappa, q_dm=q_dm, vdist=vdist
         )
     return total if np.ndim(ER) else float(total)
 
@@ -375,10 +339,6 @@ def R_mc_material(
     kappa: float,
     q_dm: float = 1.0,
     vdist: str = "halo",
-    with_atomic_ff: bool = False,
-    alpha_D: Optional[float] = None,
-    m_eD_eV: Optional[float] = None,
-    m_pD_eV: Optional[float] = None,
     ER_min_eV: Optional[float] = None,
     ER_max_eV: Optional[float] = None,
     npts: int = 800,
@@ -397,11 +357,7 @@ def R_mc_material(
         return 0.0
 
     grid = np.geomspace(lo, hi, npts)
-    spec = dRdER_mc_material(
-        delfobj, grid, material, kappa=kappa, q_dm=q_dm, vdist=vdist,
-        with_atomic_ff=with_atomic_ff, alpha_D=alpha_D,
-        m_eD_eV=m_eD_eV, m_pD_eV=m_pD_eV,
-    )
+    spec = dRdER_mc_material(delfobj, grid, material, kappa=kappa, q_dm=q_dm, vdist=vdist)
     return float(np.trapz(spec, x=grid))
 
 
@@ -726,27 +682,13 @@ def attach_mc_nr_methods(darkelf_cls) -> None:
         delf.dRdER_mc(ER, material="Ge", kappa=1e-9, q_dm=2.0, vdist="disk")
         delf.R_mc(material="Ge", kappa=1e-9, q_dm=2.0, vdist="disk")
     """
-    def _dRdER_mc(
-        self, ER_eV, material="Ge", kappa=1e-9, q_dm=1.0, vdist="halo",
-        with_atomic_ff=False, alpha_D=None, m_eD_eV=None, m_pD_eV=None,
-    ):
-        return dRdER_mc_material(
-            self, ER_eV, material=material, kappa=kappa, q_dm=q_dm, vdist=vdist,
-            with_atomic_ff=with_atomic_ff, alpha_D=alpha_D,
-            m_eD_eV=m_eD_eV, m_pD_eV=m_pD_eV,
-        )
+    def _dRdER_mc(self, ER_eV, material="Ge", kappa=1e-9, q_dm=1.0, vdist="halo"):
+        return dRdER_mc_material(self, ER_eV, material=material, kappa=kappa, q_dm=q_dm, vdist=vdist)
 
-    def _R_mc(
-        self, material="Ge", kappa=1e-9, q_dm=1.0, vdist="halo",
-        with_atomic_ff=False, alpha_D=None, m_eD_eV=None, m_pD_eV=None,
-        ER_min_eV=None, ER_max_eV=None, npts=800,
-    ):
-        return R_mc_material(
-            self, material=material, kappa=kappa, q_dm=q_dm, vdist=vdist,
-            with_atomic_ff=with_atomic_ff, alpha_D=alpha_D,
-            m_eD_eV=m_eD_eV, m_pD_eV=m_pD_eV,
-            ER_min_eV=ER_min_eV, ER_max_eV=ER_max_eV, npts=npts,
-        )
+    def _R_mc(self, material="Ge", kappa=1e-9, q_dm=1.0, vdist="halo",
+              ER_min_eV=None, ER_max_eV=None, npts=800):
+        return R_mc_material(self, material=material, kappa=kappa, q_dm=q_dm,
+                             vdist=vdist, ER_min_eV=ER_min_eV, ER_max_eV=ER_max_eV, npts=npts)
 
     setattr(darkelf_cls, "dRdER_mc", _dRdER_mc)
     setattr(darkelf_cls, "R_mc", _R_mc)
