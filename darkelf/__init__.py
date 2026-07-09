@@ -10,7 +10,7 @@ from scipy.integrate import quad
 
 
 class darkelf(object):
-    def __init__(self, mX = 1e5, mMed = -1, vesckms = 500, v0kms = 220, vekms = 240, fD = 1, vdist="halo", with_atomic_ff=False, delta = 0.0, q0=0.0, gp_gn_ratio_val=1, gp_gn_ratio='g_n/g_p', nuclear_recoil=False,
+    def __init__(self, mX = 1e5, mMed = -1, vesckms = 500, v0kms = 220, vekms = 240, fD = 1, vdist="halo", with_atomic_ff=False, therm=False, delta = 0.0, q0=0.0, gp_gn_ratio_val=1, gp_gn_ratio='g_n/g_p', nuclear_recoil=False,
         target='Ge',targetyaml='',filename="", phonon_filename="",
         eps_data_dir = os.path.dirname(__file__)+"/../data/",
         dos_filename="",fd_filename="",Zion_filename="",eps_electron_optical_filename=""):
@@ -42,6 +42,7 @@ class darkelf(object):
         self.c0cms = self.c0*1e5          # cm/s
 
         self.vdist = vdist
+        self.therm = therm 
         # self.vescdisk = vescdiskkms / self.c0
         
         self.with_atomic_ff = with_atomic_ff
@@ -324,15 +325,28 @@ class darkelf(object):
         self.c0 = 2.99792458e5            # km/s
         self.c0cms = self.c0*1e5          # cm/s
 
+        
+
         if(v0kms > 0):
             self.v0 = v0kms/self.c0   # km/s
             # self.v0kms = v0kms
+
+        # if(vesckms > 0):
+        #     self.vesc = vesckms/self.c0 # km/s
+        #     # self.vesckms = vesckms
         if(vesckms > 0):
-            self.vesc = vesckms/self.c0 # km/s
-            # self.vesckms = vesckms
+            if not self.therm:
+                self.vesc = vesckms/self.c0 # km/s
+                self.vesc_therm = 0
+
+            else:
+                self.vesc = 0
+                self.vesc_therm = vesckms/self.c0 # km/s
+
         if(vekms > 0):
             self.veavg = vekms/self.c0   # km/s
             # self.vekms = vekms
+
         elif(self.vdist == "disk"):
             self.veavg = vekms/self.c0   # km/s
             # self.vekms = vekms
@@ -631,7 +645,7 @@ class darkelf(object):
 
         # Only part of the angular range satisfies
         # |v + ve| >= vesc.
-        elif(v < self.vesc + self.veavg):
+        elif(v < self.vesc + self.veavg) and self.vesc > 0:
 
             a = 2*v*self.veavg/self.v0**2
 
@@ -695,15 +709,20 @@ class darkelf(object):
     # eta(v) function, acts only on scalar values
     def _etav_scalar_disk(self,vmini):
 
+        density_enhancement = np.exp(self.vesc_therm**2 / self.v0**2) # only neq 1 in the thermalized case where vesc lower bound 
+                                                                        # is not imposed (so self.vesc=0) but potential influences density
+
         # Recover the original analytic expression in the unboosted case.
         if(self.veavg == 0):
             if(vmini < self.vesc):
-                return 2*pi*self.v0**2/self.Nfv_disk
+                eta = 2*pi*self.v0**2/self.Nfv_disk
             else:
-                return (
+                eta = (
                     2*pi*self.v0**2/self.Nfv_disk
                     * exp(-(vmini**2 - self.vesc**2)/self.v0**2)
                 )
+            
+            return density_enhancement * eta
 
         # The boosted distribution has support beginning at
         # vesc - veavg.
@@ -728,11 +747,11 @@ class darkelf(object):
                 np.inf
             )[0]
 
-            return eta_partial + eta_full
+            return density_enhancement * (eta_partial + eta_full)
 
         # Otherwise only the full-angular-support branch contributes.
         else:
-            return quad(
+            return density_enhancement * quad(
                 lambda v: self._fv_1d_scalar_disk(v)/v,
                 vlower,
                 np.inf
