@@ -71,7 +71,7 @@ class NRMaterial:
 NR_MATERIALS: Dict[str, NRMaterial] = {
     "Xe": NRMaterial(
         name="Xe",
-        recoil_window_eV=(6.6e3, 43.3e3),  # 6.6 keV to 43.3 keV
+        recoil_window_eV=(5.4e3, 54e3),  # 5.4 keV to 54 keV
         isotopes=(
             Isotope("Xe128", 128, 54, 0.019, 119 * AMU_EV),
             Isotope("Xe129", 129, 54, 0.260, 120 * AMU_EV),
